@@ -93,7 +93,7 @@ var CATS=["야채류","냉동류","냉장류","육류","공산품류"];
 var sb=null;
 try{sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY)}catch(e){}
 var S={role:null,items:[],byId:{},branchId:null,branchName:"",orders:{},count:{},fav:{},pend:[]};
-var B={date:"",Q:{},edit:false,memo:"",chip:"전체",qs:"",only:false,done:null,busy:false};
+var B={date:"",from:"",Q:{},edit:false,memo:"",chip:"전체",qs:"",only:false,done:null,busy:false};
 var A={date:"",branches:[],reqs:[],orders:{},log:[],busy:false};
 
 function $(id){return document.getElementById(id)}
@@ -103,6 +103,7 @@ function tdy(){return kstNow().toISOString().slice(0,10)}
 function addDays(d,n){var t=new Date(d+"T00:00:00Z");t.setUTCDate(t.getUTCDate()+n);return t.toISOString().slice(0,10)}
 function tmr(){return addDays(tdy(),1)}
 function closed(d){return kstNow().toISOString().slice(0,16)>=addDays(d,-1)+"T23:00"}
+function locked(d){return d<=tdy()} /* 납품일 당일 00:00부터 거래처 변경 불가 */
 function fmt(d){var t=new Date(d+"T00:00:00Z");return (t.getUTCMonth()+1)+"/"+t.getUTCDate()+"("+"일월화수목금토"[t.getUTCDay()]+")"}
 function dl(d){var t=new Date(addDays(d,-1)+"T00:00:00Z");return (t.getUTCMonth()+1)+"월 "+t.getUTCDate()+"일 23:00"}
 function fmtAt(s){try{return new Date(s).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",hour12:false})}catch(e){return s}}
@@ -183,7 +184,7 @@ async function fetchBranch(){
   o.data.forEach(function(x){var q={};x.order_lines.forEach(function(l){q[l.item_id]=num(l.qty);S.count[l.item_id]=(S.count[l.item_id]||0)+1});S.orders[x.delivery_date]={q:q,memo:x.memo}});
   var f=await sb.from("branch_favorites").select("item_id");
   S.fav={};if(!f.error)f.data.forEach(function(r){S.fav[r.item_id]=1});
-  var p=await sb.from("change_requests").select("id,delivery_date,kind,status").eq("status","대기");
+  var p=await sb.from("change_requests").select("id,delivery_date,to_date,kind,status").eq("status","대기");
   S.pend=p.error?[]:p.data;
 }
 async function loadBranch(){
@@ -197,19 +198,24 @@ function freq(){
 }
 function total(){var n=0;for(var k in B.Q)if(B.Q[k]>0)n++;return n}
 function pendN(d){return S.pend.filter(function(r){return r.delivery_date===d}).length}
+function moving(){return B.edit&&B.from&&B.date!==B.from}
 function count(){
-  var t=total(),ex=S.orders[B.date],cl=closed(B.date);
-  $("cnt").textContent=t;$("go").disabled=t===0||B.busy;
-  $("go").textContent=B.edit?(cl?"수정 승인 요청하기":"수정 내용 접수하기"):cl?"추가 주문 승인 요청하기":ex?"추가 주문 접수하기":"주문 접수하기";
-  var n=$("nt");if(n){var p=pendN(B.date);n.textContent=(cl?"마감이 지났습니다. 변경은 사장님 승인 후 반영됩니다.":"마감 "+dl(B.date)+"까지 자유롭게 접수·수정할 수 있습니다.")+(ex&&!B.edit&&!cl?" 이 날짜에 접수된 주문이 있어 추가 주문은 합산됩니다.":"")+(p?" (승인 대기 "+p+"건)":"")}
+  var t=total(),ex=S.orders[B.date],mv=moving(),cl=closed(B.date)||(mv&&closed(B.from)),lk=locked(B.date);
+  $("cnt").textContent=t;$("go").disabled=t===0||B.busy||lk;
+  $("go").textContent=lk?"오늘은 변경 불가":mv?(cl?"납품일 변경 승인 요청하기":"납품일 변경 접수하기"):B.edit?(cl?"수정 승인 요청하기":"수정 내용 접수하기"):cl?"추가 주문 승인 요청하기":ex?"추가 주문 접수하기":"주문 접수하기";
+  var n=$("nt");if(n){var p=pendN(B.date);
+    if(lk){n.textContent="납품일 당일(자정 이후)에는 주문·변경할 수 없습니다. 사장님께 연락해 주세요.";return}
+    if(mv){n.textContent="납품일을 "+fmt(B.from)+" → "+fmt(B.date)+"로 바꿉니다. 아래 품목을 확인·수정한 뒤 접수하세요."+(ex?" 이 날짜에 이미 주문이 있어 합산됩니다.":"")+(cl?" 마감(23시)이 지나 사장님 승인 후 반영됩니다.":"");return}
+    n.textContent=(cl?"마감(23시)이 지났습니다. 자정 전까지 변경 요청을 보낼 수 있고, 사장님 승인 후 반영됩니다.":"마감 "+dl(B.date)+"까지 자유롭게 접수·수정·납품일 변경을 할 수 있습니다.")+(ex&&!B.edit&&!cl?" 이 날짜에 접수된 주문이 있어 추가 주문은 합산됩니다.":"")+(p?" (승인 대기 "+p+"건)":"")}
 }
 function exr(){
   var e=$("ex"),o=S.orders[B.date];if(!e)return;
-  if(B.edit){e.style.display="";e.innerHTML='<b>'+fmt(B.date)+' 주문 수량 수정 중</b> <button class="ghost sm" id="ce">수정 취소</button>';$("ce").onclick=function(){B.edit=false;B.Q={};renderBranch()};return}
+  if(B.edit){e.style.display="";e.innerHTML='<b>'+fmt(B.from)+' 주문 수정 중'+(moving()?' → 새 납품일 '+fmt(B.date):'')+'</b><p class="sub">납품 희망일을 바꾸면 이 품목들이 그대로 새 날짜로 옮겨집니다.</p><button class="ghost sm" id="ce">수정 취소</button>';$("ce").onclick=function(){B.edit=false;B.date=B.from;B.from="";B.Q={};renderBranch()};return}
   if(!o){e.style.display="none";return}
   e.style.display="";
-  e.innerHTML='<b>'+fmt(B.date)+' 접수 내역</b>'+tbl(o.q)+(o.memo?'<p>요청사항: '+esc(o.memo)+'</p>':'')+'<div class="acts"><button id="ed">수량 수정</button><button id="cx">주문 취소</button></div>';
-  $("ed").onclick=function(){B.edit=true;B.Q={};for(var k in o.q)B.Q[k]=o.q[k];renderBranch()};
+  e.innerHTML='<b>'+fmt(B.date)+' 접수 내역</b>'+tbl(o.q)+(o.memo?'<p>요청사항: '+esc(o.memo)+'</p>':'')+''+(locked(B.date)?'<p class="sub">납품일 당일이라 변경할 수 없습니다.</p>':'<div class="acts"><button id="ed">수정 (수량·납품일)</button><button id="cx">주문 취소</button></div>');
+  if(locked(B.date))return;
+  $("ed").onclick=function(){B.edit=true;B.from=B.date;B.Q={};for(var k in o.q)B.Q[k]=o.q[k];renderBranch()};
   $("cx").onclick=cancelOrder;
 }
 function list(){
@@ -239,15 +245,15 @@ function renderBranch(){
   }
   $("bar").style.display="";
   app.innerHTML='<h1>주문서 작성</h1><div class="meta">전체 '+S.items.length+'개 품목</div>'+
-   '<div class="banner">주문 마감: 당일 23시까지 접수 · 납품은 익일 기준 · 마감 후 변경은 사장님 승인 후 반영</div>'+
-   '<div class="extra"><label>납품 희망일 (기본: 내일)<input type="date" id="dt" min="'+tdy()+'" value="'+B.date+'"'+(B.edit?' disabled':'')+'></label><p class="note" id="nt"></p></div>'+
+   '<div class="banner">주문 마감: 납품 전날 23시까지 접수·수정·납품일 변경 · 23시~자정은 사장님 승인 후 반영 · 납품일 당일(자정 이후)은 변경 불가</div>'+
+   '<div class="extra"><label>납품 희망일 (기본: 내일)<input type="date" id="dt" min="'+(B.edit?tmr():tdy())+'" value="'+B.date+'"></label><p class="note" id="nt"></p></div>'+
    '<div class="card" id="ex"></div>'+
    '<div class="tools"><input id="q" type="search" placeholder="품목 검색 (예: 양파, ㅇㅍ)" value="'+esc(B.qs)+'" aria-label="품목 검색"><div class="chips" id="chips"></div><button class="only" id="only"></button></div>'+
    '<div class="slip"><div id="list"></div></div>'+
    '<div class="extra"><label>요청사항<textarea id="mm" rows="2" placeholder="예: 새벽 5시 전 도착">'+esc(B.memo)+'</textarea></label></div>';
   $("q").oninput=function(e){B.qs=e.target.value;list()};
   $("only").onclick=function(){B.only=!B.only;list()};
-  $("dt").onchange=function(e){B.date=e.target.value||tmr();count();exr()};
+  $("dt").onchange=function(e){var v=e.target.value||tmr();if(B.edit&&locked(v)){toast("오늘이나 지난 날짜로는 바꿀 수 없습니다. 내일 이후로 골라 주세요.");e.target.value=B.date;return}B.date=v;count();exr()};
   $("mm").oninput=function(e){B.memo=e.target.value};
   var L=$("list");
   function upd(r,id,v,w){B.Q[id]=v;if(w)r.querySelector("input").value=v;r.classList.toggle("on",v>0);count();$("only").textContent=B.only?"전체 품목 보기":"주문한 품목만 보기 ("+total()+")"}
@@ -259,20 +265,21 @@ async function submitOrder(){
   if(B.busy)return;
   var q=pos(B.Q);if(!Object.keys(q).length)return;
   B.busy=true;$("go").disabled=true;$("go").textContent="처리 중…";
-  var date=B.date,wasEdit=B.edit;
-  var r=await sb.rpc("submit_order",{p_date:date,p_lines:q,p_memo:B.memo.trim(),p_mode:wasEdit?"edit":"add"});
+  var date=B.date,wasEdit=B.edit,mv=moving(),from=B.from;
+  var r=mv?await sb.rpc("move_order",{p_from:from,p_to:date,p_lines:q,p_memo:B.memo.trim()})
+          :await sb.rpc("submit_order",{p_date:date,p_lines:q,p_memo:B.memo.trim(),p_mode:wasEdit?"edit":"add"});
   B.busy=false;
   if(r.error){count();fail(r.error);return}
   var res=r.data||{};
   if(res.result==="requested"){
-    B.done={h:"승인 요청이 접수되었습니다",m:"마감이 지나 사장님 승인 후 반영됩니다 · 납품 희망일 "+fmt(date),t:tbl(q)};
+    B.done={h:"승인 요청이 접수되었습니다",m:mv?"납품일 "+fmt(from)+" → "+fmt(date)+" 변경은 마감이 지나 사장님 승인 후 반영됩니다":"마감이 지나 사장님 승인 후 반영됩니다 · 납품 희망일 "+fmt(date),t:tbl(q)};
     try{await fetchBranch()}catch(e){}
   }else{
     try{await fetchBranch()}catch(e){}
     var o=S.orders[date]||{q:q};
-    B.done={h:wasEdit?"주문이 수정되었습니다":res.kind==="추가합산"?"추가 주문이 합산되었습니다":"주문이 접수되었습니다",m:"납품 희망일 "+fmt(date),t:tbl(o.q)};
+    B.done={h:mv?"납품일이 변경되었습니다":wasEdit?"주문이 수정되었습니다":res.kind==="추가합산"?"추가 주문이 합산되었습니다":"주문이 접수되었습니다",m:(mv?fmt(from)+" → ":"납품 희망일 ")+fmt(date),t:tbl(o.q)};
   }
-  B.Q={};B.memo="";B.edit=false;renderBranch();window.scrollTo(0,0);
+  B.Q={};B.memo="";B.edit=false;B.from="";renderBranch();window.scrollTo(0,0);
 }
 async function cancelOrder(){
   var date=B.date;
@@ -289,9 +296,9 @@ async function cancelOrder(){
 async function fetchAdmin(){
   await loadItems();
   var br=await sb.from("branches").select("id,name").order("id");if(br.error)throw br.error;A.branches=br.data;
-  var rq=await sb.from("change_requests").select("id,branch_id,delivery_date,kind,lines,memo,status,created_at").eq("status","대기").order("created_at");
+  var rq=await sb.from("change_requests").select("id,branch_id,delivery_date,to_date,kind,lines,memo,status,created_at").eq("status","대기").order("created_at");
   if(rq.error)throw rq.error;A.reqs=rq.data;
-  var ds={};ds[A.date]=1;A.reqs.forEach(function(r){ds[r.delivery_date]=1});
+  var ds={};ds[A.date]=1;A.reqs.forEach(function(r){ds[r.delivery_date]=1;if(r.to_date)ds[r.to_date]=1});
   var o=await sb.from("orders").select("id,branch_id,delivery_date,memo,order_lines(item_id,qty)").in("delivery_date",Object.keys(ds));
   if(o.error)throw o.error;
   A.orders={};o.data.forEach(function(x){var q={};x.order_lines.forEach(function(l){q[l.item_id]=num(l.qty)});A.orders[x.branch_id+"|"+x.delivery_date]={q:q,memo:x.memo}});
@@ -305,7 +312,7 @@ async function loadAdmin(){
 }
 function bname(id){for(var i=0;i<A.branches.length;i++)if(A.branches[i].id===id)return A.branches[i].name;return "지점 "+id}
 function aft(r){
-  var o=A.orders[r.branch_id+"|"+r.delivery_date],b=o?o.q:{},a={},k;
+  var o=A.orders[r.branch_id+"|"+(r.kind==="납품일변경"?r.to_date:r.delivery_date)],b=o?o.q:{},a={},k;
   if(r.kind==="취소")return a;
   if(r.kind==="수정"){for(k in r.lines)a[k]=num(r.lines[k]);return a}
   for(k in b)a[k]=b[k];
@@ -315,21 +322,22 @@ function aft(r){
 function cmp(r){
   var o=A.orders[r.branch_id+"|"+r.delivery_date],b=o?o.q:{},a=aft(r),all={},k;
   for(k in b)all[k]=1;for(k in a)all[k]=1;
-  return '<table><tr><th>품명</th><th>기존</th><th>반영 후</th></tr>'+sortedIds(all).map(function(k){var x=b[k]||0,y=a[k]||0;return '<tr><td>'+esc(nm(k))+'</td><td style="font-weight:400">'+(x?x+un(k):'-')+'</td><td>'+(y?y+un(k):'삭제')+'</td></tr>'}).join('')+'</table>';
+  var mv=r.kind==="납품일변경";
+  return '<table><tr><th>품명</th><th>'+(mv?fmt(r.delivery_date)+' 기존':'기존')+'</th><th>'+(mv?fmt(r.to_date)+' 반영 후':'반영 후')+'</th></tr>'+sortedIds(all).map(function(k){var x=b[k]||0,y=a[k]||0;return '<tr><td>'+esc(nm(k))+'</td><td style="font-weight:400">'+(x?x+un(k):'-')+'</td><td>'+(y?y+un(k):'삭제')+'</td></tr>'}).join('')+'</table>';
 }
 function renderAdmin(){
   showTop("사장님 관리",true);$("bar").style.display="none";
   var d=A.date,h='<h1>사장님 관리</h1><div class="meta">접수 현황과 승인 요청을 한곳에서 확인합니다</div>';
   h+='<h3>승인 대기함 ('+A.reqs.length+')</h3>';
   h+=A.reqs.length?A.reqs.map(function(r){
-    return '<div class="card"><div class="ch"><b>'+esc(bname(r.branch_id))+'</b><span class="pill">'+esc(r.kind)+'</span><span>'+fmt(r.delivery_date)+' 납품 · '+fmtAt(r.created_at)+' 요청</span></div>'+cmp(r)+(r.memo?'<p>요청사항: '+esc(r.memo)+'</p>':'')+'<div class="acts"><button class="ok" data-id="'+r.id+'" data-a="1">승인</button><button data-id="'+r.id+'" data-a="0">거절</button></div></div>';
+    return '<div class="card"><div class="ch"><b>'+esc(bname(r.branch_id))+'</b><span class="pill">'+esc(r.kind)+'</span><span>'+(r.kind==="납품일변경"?fmt(r.delivery_date)+' → '+fmt(r.to_date):fmt(r.delivery_date))+' 납품 · '+fmtAt(r.created_at)+' 요청</span></div>'+cmp(r)+(r.memo?'<p>요청사항: '+esc(r.memo)+'</p>':'')+'<div class="acts"><button class="ok" data-id="'+r.id+'" data-a="1">승인</button><button data-id="'+r.id+'" data-a="0">거절</button></div></div>';
   }).join(''):'<div class="empty">승인을 기다리는 요청이 없습니다.</div>';
-  h+='<h3>거래처별 주문 내역</h3><label>납품일<input type="date" id="ad" value="'+d+'"></label><p class="note">'+(closed(d)?'접수 마감됨 · 변경은 승인 필요':'접수 중 · 마감 '+dl(d))+'</p>';
+  h+='<h3>거래처별 주문 내역</h3><label>납품일<input type="date" id="ad" value="'+d+'"></label><p class="note">'+(locked(d)?'납품일 당일 · 거래처 변경 불가':closed(d)?'접수 마감됨 · 자정 전까지 승인 요청 가능':'접수 중 · 마감 '+dl(d))+'</p>';
   var ok=A.branches.filter(function(b){return A.orders[b.id+"|"+d]}).length;
   h+='<p class="note">접수 '+ok+'곳 · 미접수 '+(A.branches.length-ok)+'곳</p>';
   h+='<p><button class="ghost" id="xb">엑셀로 내려받기</button></p>';
   h+=A.branches.slice().sort(function(a,b){return (A.orders[b.id+"|"+d]?1:0)-(A.orders[a.id+"|"+d]?1:0)||a.id-b.id}).map(function(b){
-    var o=A.orders[b.id+"|"+d],n=o?Object.keys(o.q).length:0,pn=A.reqs.filter(function(r){return r.branch_id===b.id&&r.delivery_date===d}).length;
+    var o=A.orders[b.id+"|"+d],n=o?Object.keys(o.q).length:0,pn=A.reqs.filter(function(r){return r.branch_id===b.id&&(r.delivery_date===d||r.to_date===d)}).length;
     return '<div class="card"><div class="ch"><b>'+esc(b.name)+'</b><span>'+(n?n+'개 품목':'주문 없음')+'</span>'+(pn?'<span class="pill">승인 대기 '+pn+'</span>':'')+'</div>'+(n?tbl(o.q)+(o.memo?'<p>요청사항: '+esc(o.memo)+'</p>':''):'<div class="empty">이 날짜에 접수된 주문이 없습니다.</div>')+'</div>';
   }).join('');
   h+='<h3>처리 이력</h3>'+(A.log.length?'<ul class="log">'+A.log.map(function(x){return '<li>'+esc(fmtAt(x.at))+' '+esc(x.text)+'</li>'}).join('')+'</ul>':'<div class="empty">아직 처리 내역이 없습니다.</div>');
