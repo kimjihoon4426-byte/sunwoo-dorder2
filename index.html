@@ -77,6 +77,20 @@ td:last-child{font-weight:700}
 .toast{position:fixed;left:14px;right:14px;bottom:100px;max-width:560px;margin:0 auto;background:var(--ink);color:var(--bg);padding:14px 16px;border-radius:12px;font-size:16px;z-index:20}
 .done h2{margin:0 0 4px;font-size:24px}
 :focus-visible{outline:3px solid var(--green);outline-offset:2px}
+.bxg{margin-top:10px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.bxg .bxr{min-width:0}
+.bxr{display:flex;flex-wrap:wrap;align-items:baseline;align-content:space-between;gap:2px 6px;border:1.5px solid var(--line);border-radius:12px;padding:8px}
+.bxr.box{border-color:var(--green)}
+.bxr .lb{font-size:16px;font-weight:900;white-space:nowrap}
+.bxr.box .lb{color:var(--green)}
+.bxr .u{margin-left:auto;font-size:13px;font-weight:700;color:var(--sub);white-space:nowrap}
+.bxr .step{flex:none;width:100%;order:3;display:flex;margin-top:4px}
+.bxr .step button{width:40px;height:44px;flex:none}.bxr .step input{flex:1;min-width:0;width:auto;height:44px}
+@media (max-width:359px){.bxr{padding:6px}.bxr .step button{width:34px}}
+.bxr.box .step input{font-size:22px;color:var(--green)}
+.bxg .bxt{grid-column:1/-1}
+.bxt{font-size:15px;color:var(--sub);margin-top:2px}.bxt b{color:var(--ink);font-size:16px}.bxt:empty{display:none}
+.qb{font-weight:900}.qs{font-weight:400;color:var(--sub);font-size:14px}
 .tabs{padding:6px 0 12px}.tabs button{font-weight:700}
 .pill.gray{background:var(--line);color:var(--ink)}.pill.warn{background:#c0392b;color:#fff}
 .off{opacity:.55}
@@ -136,10 +150,15 @@ function packTxt(it){
   if(it.unit==="EA")return (p?p+" · ":"")+"낱개 주문";
   return p;
 }
+function isBox(it){return it&&it.pack_qty>1&&!/^(BOX|박스)$/i.test(it.unit)}
+function splitBox(it,n){var p=it.pack_qty,b=Math.floor((n+1e-9)/p);return {b:b,l:+(n-b*p).toFixed(1)}}
+function boxLabel(it,n){var x=splitBox(it,n);return (x.b?x.b+"박스":"")+(x.b&&x.l?" + ":"")+(x.l?x.l+it.unit:"")}
+function boxTotal(it,n){if(!(n>0))return '';var x=splitBox(it,n);return '합계 <b>'+esc(boxLabel(it,n))+'</b>'+(x.b?' = '+n+esc(it.unit):'')}
+function qtyCell(id,n){var it=S.byId[id];if(!isBox(it))return n+' '+esc(un(id));var x=splitBox(it,n);return '<span class="qb">'+esc(boxLabel(it,n))+'</span>'+(x.b?' <span class="qs">('+n+esc(it.unit)+')</span>':'')}
 function nm(id){var it=S.byId[id];return it?it.name:("품목 "+id)}
 function un(id){var it=S.byId[id];return it?it.unit:""}
 function sortedIds(q){return Object.keys(q).sort(function(a,b){var x=S.byId[a],y=S.byId[b];return (x?x.sort:9e9)-(y?y.sort:9e9)})}
-function tbl(q){return '<table><tr><th>품명</th><th>수량</th></tr>'+sortedIds(q).map(function(k){return '<tr><td>'+esc(nm(k))+'</td><td>'+q[k]+' '+esc(un(k))+'</td></tr>'}).join('')+'</table>'}
+function tbl(q){return '<table><tr><th>품명</th><th>수량</th></tr>'+sortedIds(q).map(function(k){return '<tr><td>'+esc(nm(k))+'</td><td>'+qtyCell(k,q[k])+'</td></tr>'}).join('')+'</table>'}
 
 /* ===== 초성 검색 ===== */
 function cho(s){var J="ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";return s.split("").map(function(ch){var c=ch.charCodeAt(0)-44032;return c>=0&&c<11172?J[Math.floor(c/588)]:ch}).join("")}
@@ -247,9 +266,14 @@ function list(){
   if(B.chip==="전체")arr.sort(function(a,b){return (F[b.id]?1:0)-(F[a.id]?1:0)||a.sort-b.sort});
   $("list").innerHTML=arr.map(function(it){
     var n=B.Q[it.id]||0,pk=packTxt(it);
-    return '<div class="row'+(n>0?' on':'')+'" data-i="'+it.id+'"><div class="name">'+(F[it.id]?'<i title="자주 주문">★</i>':'')+esc(it.name)+(S.fav[it.id]?'<span class="used">사용이력 있음</span>':'')+'</div><div class="sub">'+esc(it.category)+(pk?'<em class="ib">'+esc(pk)+'</em>':'')+'</div><div class="ctl"><div class="step"><button data-d="-1" aria-label="'+esc(it.name)+' 줄이기">−</button><input type="number" min="0" inputmode="decimal" value="'+n+'" aria-label="'+esc(it.name)+' 수량"><button data-d="1" aria-label="'+esc(it.name)+' 늘리기">+</button></div><span class="unit">'+esc(unitTxt(it))+'</span></div></div>';
+    return '<div class="row'+(n>0?' on':'')+'" data-i="'+it.id+'"><div class="name">'+(F[it.id]?'<i title="자주 주문">★</i>':'')+esc(it.name)+(S.fav[it.id]?'<span class="used">사용이력 있음</span>':'')+'</div><div class="sub">'+esc(it.category)+(pk?'<em class="ib">'+esc(pk)+'</em>':'')+'</div>'+(isBox(it)?boxCtl(it,n):'<div class="ctl"><div class="step"><button data-d="-1" aria-label="'+esc(it.name)+' 줄이기">−</button><input type="number" min="0" inputmode="decimal" value="'+n+'" aria-label="'+esc(it.name)+' 수량"><button data-d="1" aria-label="'+esc(it.name)+' 늘리기">+</button></div><span class="unit">'+esc(unitTxt(it))+'</span></div>')+'</div>';
   }).join("")||'<div class="empty">'+(B.only?'아직 선택한 품목이 없습니다.':(B.chip==="자주 주문"&&!B.qs)?'아직 주문 이력이 없어 자주 주문 품목이 없습니다.':'검색 결과가 없습니다. 다른 이름이나 초성으로 검색해 보세요.')+'</div>';
   var o=$("only");o.textContent=B.only?"전체 품목 보기":"주문한 품목만 보기 ("+total()+")";
+}
+function boxCtl(it,n){var x=splitBox(it,n),nmE=esc(it.name);
+  return '<div class="bxg"><div class="bxr box"><span class="lb">박스</span><div class="step" data-k="b"><button data-d="-1" aria-label="'+nmE+' 박스 줄이기">−</button><input type="number" min="0" inputmode="numeric" value="'+x.b+'" aria-label="'+nmE+' 박스 수"><button data-d="1" aria-label="'+nmE+' 박스 늘리기">+</button></div><span class="u">1박스 = '+it.pack_qty+esc(it.unit)+'</span></div>'+
+    '<div class="bxr"><span class="lb">낱개</span><div class="step" data-k="l"><button data-d="-1" aria-label="'+nmE+' 낱개 줄이기">−</button><input type="number" min="0" inputmode="decimal" value="'+x.l+'" aria-label="'+nmE+' 낱개 수"><button data-d="1" aria-label="'+nmE+' 낱개 늘리기">+</button></div><span class="u">'+esc(it.unit)+'</span></div>'+
+    '<div class="bxt">'+boxTotal(it,n)+'</div></div>';
 }
 function chips(){var c=$("chips");c.innerHTML="";["전체","자주 주문"].concat(CATS).forEach(function(n){var b=document.createElement("button");b.textContent=(n==="자주 주문"?"★ ":"")+n;b.setAttribute("aria-pressed",n===B.chip);b.onclick=function(){B.chip=n;chips();list()};c.appendChild(b)})}
 function renderBranch(){
@@ -275,8 +299,18 @@ function renderBranch(){
   $("mm").oninput=function(e){B.memo=e.target.value};
   var L=$("list");
   function upd(r,id,v,w){B.Q[id]=v;if(w)r.querySelector("input").value=v;r.classList.toggle("on",v>0);count();$("only").textContent=B.only?"전체 품목 보기":"주문한 품목만 보기 ("+total()+")"}
-  L.onclick=function(e){var b=e.target.closest("button");if(!b)return;var r=b.closest(".row"),id=r.dataset.i;upd(r,id,Math.max(0,+((B.Q[id]||0)+ +b.dataset.d).toFixed(1)),1)};
-  L.oninput=function(e){var r=e.target.closest(".row"),v=parseFloat(e.target.value);upd(r,r.dataset.i,isNaN(v)||v<0?0:v,0)};
+  /* 박스 품목: 박스·낱개 칸 값을 합쳐 낱개 합계로 저장, 낱개가 1박스 이상이 되면 박스로 넘김 */
+  function updBox(r,id,bx,ls,src){var it=S.byId[id],p=it.pack_qty;bx=Math.max(0,Math.floor(bx||0));ls=Math.max(0,+(ls||0));
+    var tot=+(bx*p+ls).toFixed(1),x=splitBox(it,tot),bi=r.querySelector('[data-k="b"] input'),li=r.querySelector('[data-k="l"] input');
+    B.Q[id]=tot;if(src!=="b"||x.b!==bx)bi.value=x.b;if(src!=="l"||x.l!==ls)li.value=x.l;
+    r.querySelector(".bxt").innerHTML=boxTotal(it,tot);r.classList.toggle("on",tot>0);count();$("only").textContent=B.only?"전체 품목 보기":"주문한 품목만 보기 ("+total()+")"}
+  function cur(r,id){var x=splitBox(S.byId[id],B.Q[id]||0);return x}
+  L.onclick=function(e){var b=e.target.closest("button");if(!b)return;var r=b.closest(".row"),id=r.dataset.i,st=b.closest(".step"),k=st&&st.dataset.k;
+    if(k){var x=cur(r,id),d=+b.dataset.d;if(k==="b")updBox(r,id,x.b+d,x.l,null);else updBox(r,id,x.b,+(x.l+d).toFixed(1),null);return}
+    upd(r,id,Math.max(0,+((B.Q[id]||0)+ +b.dataset.d).toFixed(1)),1)};
+  L.oninput=function(e){var r=e.target.closest(".row"),st=e.target.closest(".step"),k=st&&st.dataset.k,v=parseFloat(e.target.value);v=isNaN(v)||v<0?0:v;
+    if(k){var x=cur(r,r.dataset.i);if(k==="b")updBox(r,r.dataset.i,v,x.l,"b");else updBox(r,r.dataset.i,x.b,v,"l");return}
+    upd(r,r.dataset.i,v,0)};
   chips();list();count();exr();
 }
 async function submitOrder(){
